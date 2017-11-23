@@ -39,6 +39,7 @@ MINIMAP2_PATH=/space/users/rkirke08/Desktop/software/minimap2/;
 
 # Prepare directories
 mkdir -p temp
+mkdir -p results
 
 ##################
 #### Analysis ####
@@ -74,14 +75,14 @@ while read illuminasamples
 do
 NAME=$illuminasamples;
 echo $NAME
-bwa mem -t $THREADS $ASSEMBLY data/$NAME > $NAME.aln.sam
+bwa mem -t $THREADS $ASSEMBLY data/$NAME > temp/$NAME.aln.sam
 
 echo "Generate coverage data"
 # (MA solution from multi metagenome https://github.com/MadsAlbertsen/multi-metagenome/blob/master/misc.scripts/calc.coverage.in.bam.depth.pl)
-samtools view --threads $THREADS -Sb  $NAME.aln.sam  >  $NAME.aln.bam
-samtools sort  --threads $THREADS $NAME.aln.bam -o $NAME.aln.sorted.bam
-samtools depth $NAME.aln.sorted.bam > $NAME.depth.txt
-perl calc.coverage.in.bam.depth.pl -i $NAME.depth.txt -o $NAME.bwa.coverage.csv
+samtools view --threads $THREADS -Sb  temp/$NAME.aln.sam  >  temp/$NAME.aln.bam
+samtools sort  --threads $THREADS temp/$NAME.aln.bam -o temp/$NAME.aln.sorted.bam
+samtools depth temp/$NAME.aln.sorted.bam > temp/$NAME.depth.txt
+perl calc.coverage.in.bam.depth.pl -i temp/$NAME.depth.txt -o results/$NAME.bwa.coverage.csv
 done < illuminasamples
 
 
