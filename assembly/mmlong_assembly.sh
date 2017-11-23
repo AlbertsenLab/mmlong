@@ -12,7 +12,7 @@ where:
 	-nanopore Path to your fastq file
 	-threads Number of threads to user
 	-minlength Minimum read length requirement
-Requirements - if your programs are named differently, then change the reference in the respective bash script:
+Requirements:
 minimap (v. 0.2-r124-dirty https://github.com/lh3/minimap)
 miniasm (v. 0.2-r168-dirty https://github.com/lh3/miniasm)
 minimap2(v. 2.0rc1-r232 https://github.com/lh3/minimap2)

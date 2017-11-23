@@ -14,7 +14,7 @@ where:
 	-threads Number of threads to user
 	illuminasamples file with name(s) of illumina data files
 	nanoporesamples file with name(s) of nanopore data files
-Requirements - if your programs are named differently, then change the reference in the respective bash script:
+Requirements:
 minimap2(v. 2.0rc1-r232 https://github.com/lh3/minimap2)
 samtools (v. 1.3.1)
 bwa (v. <NA> http://bio-bwa.sourceforge.net/)
