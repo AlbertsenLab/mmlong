@@ -69,6 +69,11 @@ $MINIASM_PATH/miniasm -f $NANOREADS_FQ_HQ temp/reads.paf.gz > temp/miniasm_assem
 awk '/^S/{print ">"$2"\n"$3}' temp/miniasm_assembly.gfa > temp/miniasm_assembly.fa
 # Super fast and produces some promising long contigs
 
+# Generate nanopore connections from miniasm graph
+# Parse miniasm graph GFA to get connections between linear contigs
+grep -P "^L\tutg[0-9]{1,6}l" temp/miniasm_assembly.gfa > results/miniasmGRAPHconnections.tsv
+sed -i -e "s/L\tutg//" -e "s/\+\tutg//" -e "s/\-\tutg//" -e "s/l//" -e "s/l.*/\t1/" -e "1s/^/scaffold1\tscaffold2\tconnections\n/"   results/miniasmGRAPHconnections.tsv
+
 # Polish genome assembly with 2x Racon (https://github.com/isovic/racon)
 # Racon1x
 $MINIMAP2_PATH/minimap2 -t $THREADS -x map-ont temp/miniasm_assembly.fa $NANOREADS_FQ_HQ > temp/mappings1.paf  
@@ -78,3 +83,4 @@ $MINIMAP2_PATH/minimap2 -t $THREADS -x map-ont temp/racon1x.fasta $NANOREADS_FQ_
 $RACON_PATH/racon -t $THREADS $NANOREADS_FQ_HQ temp/mappings2.paf temp/racon1x.fasta temp/racon2x.fasta 
 # Clean fasta headers
 awk '/^>/{print ">" ++i; next}{print}' temp/racon2x.fasta > results/assembly.fasta
+
