@@ -224,17 +224,17 @@ grep -P "^L\tutg[0-9]{1,6}l" | \
 cut -f2,4 | sed -e 's/utg0*//g' -e 's/l\t/,/g' -e 's/l$//g' -e 's/$/,5/' >> metagenome_assembly/asmb_link.csv
 
 
-# Nanopore connections
-for BAM in $NP_COV_NAME
-do
-  echo "scaffold1,scaffold2,connections" > metagenome_mapping/${BAM}_link.csv
-  CON=`$SAMTOOLS view --threads $THREADS -q 10 -F 0x104 metagenome_mapping/${BAM}_cov.bam |\
-  grep -v "^@" | cut -f1,3 | sort -u -k1,2`
-  join -j 1 -o 1.1,1.2,2.2  <(echo "$CON") <(echo "$CON") |\
-  awk '($2 < $3) {print $1,$2,$3}; ($2 > $3) {print $1,$3,$2}' |\
-  sort -u -k1,3 | cut -d" " -f2,3 | sort | uniq -c | awk '{OFS=","; print $2,$3,$1}' \
-  >> metagenome_mapping/${BAM}_link.csv
-done
+# Nanopore connections NB: CURRENTLY NOT WORKING
+#for BAM in $NP_COV_NAME
+#do
+#  echo "scaffold1,scaffold2,connections" > metagenome_mapping/${BAM}_link.csv
+#  CON=`$SAMTOOLS view --threads $THREADS -q 10 -F 0x104 metagenome_mapping/${BAM}_cov.bam |\
+#  grep -v "^@" | cut -f1,3 | sort -u -k1,2`
+#  join -j 1 -o 1.1,1.2,2.2  <(echo "$CON") <(echo "$CON") |\
+#  awk '($2 < $3) {print $1,$2,$3}; ($2 > $3) {print $1,$3,$2}' |\
+#  sort -u -k1,3 | cut -d" " -f2,3 | sort | uniq -c | awk '{OFS=","; print $2,$3,$1}' \
+#  >> metagenome_mapping/${BAM}_link.csv
+#done
 
 # Illumina connections
 for BAM in $ILM_COV_NAME
@@ -317,7 +317,7 @@ join -a 1 -e 0 -t, -j 1 -o 1.1,2.2 <(echo "$SCF") - | sort -t, -k1,1 -n \
 fi
 
 
-### Prepare for binning and reassembly -----------------------------------------
+### Prepare for binning --------------------------------------------------------
 if [ ! -d "binning" ]; then
 
 mkdir -p binning
