@@ -1,6 +1,6 @@
 #!/bin/bash
 # mmlong metagenome data generation
-# Version 1.1
+# Version 1.1.1
 # By Rasmus Kirkegaard and Søren Karst
 
 ################################################################################
@@ -49,6 +49,7 @@ PORECHOP=/space/users/smk/bin/porechop;
 RACON=/space/sharedbin/bin/racon;
 MINIASM=/space/sharedbin/bin/miniasm;
 MINIMAP2=/space/users/smk/Software/minimap2-2.5/minimap2-2.5_x64-linux/minimap2;
+SAMTOOLS=/space/users/smk/Software/SAMtools/bin/samtools;
 PARALLEL=/usr/bin/parallel;
 PRODIGAL=/space/sharedbin/bin/prodigal;
 HMMSEARCH=/usr/bin/hmmsearch;
@@ -59,7 +60,7 @@ BARRNAP=/space/users/smk/Software/barrnap-0.8/bin/barrnap;
 MOTHUR=/space/sharedbin/bin/mothur;
 MOTHUR_DB=/space/users/smk/Software/databases/mothur/silva.seed_v132.align;
 MOTHUR_TAX=/space/users/smk/Software/databases/mothur/silva.seed_v132.tax;
-RSTUDIO=/usr/bin/rstudio;
+RSCRIPT=/usr/bin/Rscript;
 
 ### Terminal Arguments ---------------------------------------------------------
 
@@ -189,9 +190,9 @@ for DATA_FILE in $NP_COV_NAME
 do
   $MINIMAP2 -ax map-ont -t $THREADS metagenome_assembly/assembly_racon.fa \
   trimmed_data/${DATA_FILE}_trim.fq | \
-  samtools view -@ $THREADS -q 10 -Sb -F 0x104 - |\
-  samtools sort -@ $THREADS - > metagenome_mapping/${DATA_FILE}_cov.bam
-  # samtools view: -q 5 = min map quality; -F 0x104 = exclude unmapped and 
+  $SAMTOOLS view -@ $THREADS -q 10 -Sb -F 0x104 - |\
+  $SAMTOOLS sort -@ $THREADS - > metagenome_mapping/${DATA_FILE}_cov.bam
+  # $SAMTOOLS view: -q 5 = min map quality; -F 0x104 = exclude unmapped and 
   # secondary hits
 done
 
@@ -200,8 +201,8 @@ for DATA_FILE in $ILM_COV_NAME
 do
   $MINIMAP2 -ax sr -t $THREADS metagenome_assembly/assembly_racon.fa \
   trimmed_data/${DATA_FILE}1_trim.fq trimmed_data/${DATA_FILE}2_trim.fq | \
-  samtools view -@ $THREADS -q 10 -Sb -F 0x104 - |\
-  samtools sort -@ $THREADS - > metagenome_mapping/${DATA_FILE}_cov.bam
+  $SAMTOOLS view -@ $THREADS -q 10 -Sb -F 0x104 - |\
+  $SAMTOOLS sort -@ $THREADS - > metagenome_mapping/${DATA_FILE}_cov.bam
 done
 
 # Read coverage and stdev
@@ -209,11 +210,11 @@ for BAM in metagenome_mapping/*_cov.bam
 do
   BAM_NAME=`basename $BAM _cov.bam`
   echo "scaffold,coverage,stdev" > metagenome_mapping/${BAM_NAME}_cov.csv
-  samtools depth -aa $BAM |\
+  $SAMTOOLS depth -aa $BAM |\
   awk -F  "\t" '{a[$1] += $3; b[$1]++; c[$1]+=$3*$3}\
   END{OFS = ","; for (i in a) print i, a[i]/b[i], sqrt(c[i]/b[i] - (a[i]/b[i])^2)}' - |\
   sort -t, -n -k1,1 >> metagenome_mapping/${BAM_NAME}_cov.csv
-  # samtools depth: -aa = keep contigs with 0 coverage
+  # $SAMTOOLS depth: -aa = keep contigs with 0 coverage
 done
 
 # Assembly connections
@@ -227,7 +228,7 @@ cut -f2,4 | sed -e 's/utg0*//g' -e 's/l\t/,/g' -e 's/l$//g' -e 's/$/,5/' >> meta
 for BAM in $NP_COV_NAME
 do
   echo "scaffold1,scaffold2,connections" > metagenome_mapping/${BAM}_link.csv
-  CON=`samtools view --threads $THREADS -q 10 -F 0x104 metagenome_mapping/${BAM}_cov.bam |\
+  CON=`$SAMTOOLS view --threads $THREADS -q 10 -F 0x104 metagenome_mapping/${BAM}_cov.bam |\
   grep -v "^@" | cut -f1,3 | sort -u -k1,2`
   join -j 1 -o 1.1,1.2,2.2  <(echo "$CON") <(echo "$CON") |\
   awk '($2 < $3) {print $1,$2,$3}; ($2 > $3) {print $1,$3,$2}' |\
@@ -239,7 +240,7 @@ done
 for BAM in $ILM_COV_NAME
 do
   echo "scaffold1,scaffold2,connections" > metagenome_mapping/${BAM}_link.csv
-  CON=`samtools view --threads $THREADS -q 10 -F 0x104 metagenome_mapping/${BAM}_cov.bam |\
+  CON=`$SAMTOOLS view --threads $THREADS -q 10 -F 0x104 metagenome_mapping/${BAM}_cov.bam |\
   grep -v "^@" | cut -f1,3 | sort -u -k1,2`
   join -j 1 -o 1.1,1.2,2.2  <(echo "$CON") <(echo "$CON") |\
   awk '($2 < $3) {print $1,$2,$3}; ($2 > $3) {print $1,$3,$2}' |\
@@ -292,11 +293,11 @@ $BARRNAP metagenome_assembly/assembly_racon.fa --reject 0.3 --threads $THREADS \
 grep "16S_rRNA" metagenome_annotation/rRNA_search.txt | cut -f1,4,5 | \
 sed -e '/^#/d' -e 's/Name=//' | sort -u > metagenome_annotation/ssu_gene.txt
 
-samtools faidx metagenome_assembly/assembly_racon.fa
+$SAMTOOLS faidx metagenome_assembly/assembly_racon.fa
 for GENE in "$(cat metagenome_annotation/ssu_gene.txt)"
 do
  REGION=`echo "$GENE" | sed -e 's/\t/:/' -e 's/\t/-/'`
- samtools faidx metagenome_assembly/assembly_racon.fa $REGION \
+ $SAMTOOLS faidx metagenome_assembly/assembly_racon.fa $REGION \
  >> metagenome_annotation/ssu_gene.fa
 done
 
@@ -373,7 +374,7 @@ rm(i)
 save.image(file=\"data.RData\")
 " > binning/load.R
 
-Rscript binning/load.R
+$RSCRIPT binning/load.R
 
 echo "# mmlong binning template
 
@@ -391,10 +392,6 @@ mmplot(data = d, x = \"np_cov\", y = \"ilm_cov\", color = \"gc\") +
   theme(legend.position = \"right\")
 \`\`\`
 " > binning/analysis.Rmd
-fi
-
-if [ ! -d "reassembly" ]; then
-  mkdir -p reassembly
 fi
 
 ### Cleanup --------------------------------------------------------------------
@@ -433,16 +430,22 @@ PORECHOP=/space/users/smk/bin/porechop;
 RACON=/space/sharedbin/bin/racon;
 MINIASM=/space/sharedbin/bin/miniasm;
 MINIMAP2=/space/users/smk/Software/minimap2-2.5/minimap2-2.5_x64-linux/minimap2;
+SAMTOOLS=/space/users/smk/Software/SAMtools/bin/samtools;
+PARALLEL=/usr/bin/parallel;
 PRODIGAL=/space/sharedbin/bin/prodigal;
+HMMSEARCH=/usr/bin/hmmsearch;
+ESSENTIAL=/space/users/smk/Software/databases/essential/essential.hmm;
 KAIJU=/space/users/smk/Software/kaiju/bin;
 KAIJU_DB=/space/users/smk/Software/kaiju/database;
-DATA_DIR=data
-NP_ASMB=`cat np_asmb.txt`
-NP_COV=`cat np_cov.txt`
-ILM_COV=`cat ilm_cov.txt`
-THREADS=40
-NP_MINLENGTH=8000
-NP_ALL=`printf "$NP_COV""\n""$NP_ASMB""\n" | uniq`
-NP_COV_NAME=`echo "$NP_COV" | sed 's/\..*$//g'`
-NP_ASMB_NAME=`echo "$NP_ASMB" | sed 's/\..*$//g'`
-ILM_COV_NAME=`echo "$ILM_COV" | sed 's/[12]\..*$//g' | sort | uniq`
+BARRNAP=/space/users/smk/Software/barrnap-0.8/bin/barrnap;
+MOTHUR=/space/sharedbin/bin/mothur;
+MOTHUR_DB=/space/users/smk/Software/databases/mothur/silva.seed_v132.align;
+MOTHUR_TAX=/space/users/smk/Software/databases/mothur/silva.seed_v132.tax;
+RSTUDIO=/usr/bin/rstudio;
+NP_ALL=`printf "$NP_COV""\n""$NP_ASMB""\n" | uniq`;
+NP_COV_NAME=`echo "$NP_COV" | sed 's/\..*$//g'`;
+NP_ASMB_NAME=`echo "$NP_ASMB" | sed 's/\..*$//g'`;
+ILM_COV_NAME=`echo "$ILM_COV" | sed 's/[12]\..*$//g' | sort | uniq`;
+THREADS=40;
+NP_MINLENGTH=8000;
+
