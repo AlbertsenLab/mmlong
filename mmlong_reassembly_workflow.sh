@@ -1,7 +1,7 @@
 #!/bin/bash
-# mmlong bin reassembly
-# Version 1.0
+# mmlong reassembly workflow
 # By Rasmus Kirkegaard and Søren Karst
+VERSION=1.0.1
 
 ################################################################################
 ### Preparation ----------------------------------------------------------------
@@ -24,7 +24,7 @@ where:
     -x  Run pipeline on test data.
 
 Requirements:
-
+- Test
 
 "
 ### Customizable Arguments -----------------------------------------------------
@@ -33,7 +33,7 @@ Requirements:
 SAMTOOLS=/space/users/smk/Software/SAMtools/bin/samtools
 RACON=/space/users/rkirke08/Desktop/software/racon/racon/racon/bin/racon;
 SPADES=/space/users/smk/Software/Spades3.11/SPAdes-3.11.1-Linux/bin/spades.py;
-UNICYCLER=/space/users/smk/Software/Unicycler/unicycler-runner.py;
+UNICYCLER=/space/users/smk/bin/unicycler;
 FILTLONG=/space/sharedbin/bin/filtlong;
 QUAST=/space/sharedbin/bin/quast;
 
@@ -107,9 +107,9 @@ do
     sort | uniq`
     LC_ALL=C grep -Fwf <(echo "$IR") -A 3 $TRIM_DIR/${NP_NAME}_trim.fq | \
     sed '/^--$/d' > $BIN_PATH/data/${NP_NAME}_trim_subset.tmp  
-    $FILTLONG --min_length 8000 --target_bases 375000000 \
+    $FILTLONG --target_bases 375000000 \
     --length_weight 10 $BIN_PATH/data/${NP_NAME}_trim_subset.tmp \
-    > $BIN_PATH/data/${NP_NAME}_trim_subset.fa
+    > $BIN_PATH/data/${NP_NAME}_trim_subset.fq
     rm $BIN_PATH/data/${NP_NAME}_trim_subset.tmp
   done 
 done
@@ -128,7 +128,7 @@ do
         mkdir $BIN_PATH/$ASMB_NAME
         $UNICYCLER -1 $BIN_PATH/data/${ILM_NAME}1_trim_subset.fq \
         -2 $BIN_PATH/data/${ILM_NAME}2_trim_subset.fq \
-        -l $BIN_PATH/data/${NP_NAME}_trim_subset.fa --threads $THREADS \
+        -l $BIN_PATH/data/${NP_NAME}_trim_subset.fq --threads $THREADS \
         --spades_path $SPADES --no_correct --min_kmer_frac 0.3 --kmer_count 3 \
         --no_pilon --racon_path $RACON --keep 3 -o $BIN_PATH/$ASMB_NAME
         cp $BIN_PATH/$ASMB_NAME/assembly.fasta \
@@ -141,11 +141,27 @@ do
   done
 done
 
+### Logfile --------------------------------------------------------------------
+LOG_NAME="mmlong_reassembly_log_$(date +%s).txt"
+
+echo "Input arguments:
+mmlong reassembly workflow script version: $VERSION
+Path to genome bins: $BIN_DIR
+Nanopore data list for assembly: $NP_ASMB
+Illumina data list for assembly: $ILM_ASMB
+Path to trimmed data: $TRIM_DIR
+Path to mapped data: $MAP_DIR
+Number of threads: $THREADS
+Nanopore min read length: $NP_MINLENGTH" >> $LOG_NAME
+
 ################################################################################
-### Testing --------------------------------------------------------------------
+### Exit -----------------------------------------------------------------------
 ################################################################################
 exit 0
 
+################################################################################
+### Testing --------------------------------------------------------------------
+################################################################################
 NP_ASMB=`cat ./np_asmb.txt`;
 ILM_ASMB=`cat ./ilm_asmb.txt`;
 BIN_DIR=./binning/bins;

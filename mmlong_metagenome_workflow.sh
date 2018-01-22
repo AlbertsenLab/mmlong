@@ -1,7 +1,8 @@
 #!/bin/bash
 # mmlong metagenome data generation
-# Version 1.1.3
 # By Rasmus Kirkegaard and Søren Karst
+# Version
+VERSION=1.1.3
 
 ################################################################################
 ### Preparation ----------------------------------------------------------------
@@ -406,9 +407,10 @@ fi
 
 
 ### Logfile --------------------------------------------------------------------
-LOG_NAME="log_$(date +%s).txt"
+LOG_NAME="mmlong_metagenome_log_$(date +%s).txt"
 
 echo "Input arguments:
+mmlong metagenome workflow script version: $VERSION
 Sequencing data folder: $DATA_DIR
 Nanopore data list for assembly: $NP_ASMB
 Nanopore data list for coverage estimates: $NP_COV
