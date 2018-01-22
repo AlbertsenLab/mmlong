@@ -1,6 +1,6 @@
 #!/bin/bash
 # mmlong metagenome data generation
-# Version 1.1.1
+# Version 1.1.3
 # By Rasmus Kirkegaard and Søren Karst
 
 ################################################################################
@@ -39,8 +39,10 @@ Requirements:
 ### Customizable Arguments -----------------------------------------------------
 
 # Adaptors
-ILM_ADP1=CTGTCTCTTATACACATCTGACGCTGCCGACGA
-ILM_ADP2=CTGTCTCTTATACACATCTCCGAGCCCACGAGAC
+NEX_ADP1=CTGTCTCTTATACACATCT # Illumina Nextera adaptor sequences
+NEX_ADP2=CTGTCTCTTATACACATCT # Illumina Nextera adaptor sequences
+TRU_ADP1=AGATCGGAAGAGCACACGTCTGAACTCCAGTCA # Illumina TruSeq and NEB Nebnext adaptor sequences
+TRU_ADP2=AGATCGGAAGAGCGTCGTGTAGGGAAAGAGTGT # Illumina TruSeq and NEB Nebnext adaptor sequences
 
 # Paths to dependencies
 FILTLONG=/space/sharedbin/bin/filtlong;
@@ -130,7 +132,8 @@ done
 # Illumina data
 for DATA_NAME in $ILM_COV_NAME
 do
-  $CUTADAPT -a $ILM_ADP1 -A $ILM_ADP2 -j $THREADS -m 100 -q 20 \
+  $CUTADAPT -a $NEX_ADP1 -a $TRU_ADP1 -A $NEX_ADP2 \
+  -A $TRU_ADP2 -j $THREADS -m 100 -q 20 \
   -o trimmed_data/${DATA_NAME}1_trim.fq \
   --paired-output trimmed_data/${DATA_NAME}2_trim.fq \
   $DATA_DIR/${DATA_NAME}1.fq $DATA_DIR/${DATA_NAME}2.fq
