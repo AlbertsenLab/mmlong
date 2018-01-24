@@ -1,7 +1,7 @@
 #!/bin/bash
 # mmlong reassembly workflow
 # By Rasmus Kirkegaard and Søren Karst
-VERSION=1.0.1
+VERSION=1.0.2
 
 ################################################################################
 ### Preparation ----------------------------------------------------------------
@@ -10,7 +10,7 @@ VERSION=1.0.1
 ### Description ----------------------------------------------------------------
 
 USAGE="$(basename "$0") [-h] [-n file -i file -b folder -d folder -m folder -t value -x] 
--- mmlong metagenome data generation: Read filtering, metagenome assembly, 
+-- mmlong metagenome data generation v. $VERSION: Read filtering, metagenome assembly, 
 read coverage estimation, taxonomic classification and detection of SSU rRNA.
 
 where:
@@ -90,11 +90,11 @@ do
   do
     IR=`$SAMTOOLS view -@ $THREADS -q 10 -F 0x104 $MAP_DIR/$ILM_NAME* |\
     awk 'NR==FNR{a[$0];next}$3 in a{print $1}' $BIN_PATH/scaffold.list - |\
-    sort | uniq`
+    sort | uniq | head -n 1200000`
     LC_ALL=C grep -Fwf <(echo "$IR") -A 3 $TRIM_DIR/${ILM_NAME}1_trim.fq | \
-    sed '/^--$/d' | head -n 3000000 > $BIN_PATH/data/${ILM_NAME}1_trim_subset.fq &
+    sed '/^--$/d' > $BIN_PATH/data/${ILM_NAME}1_trim_subset.fq &
     LC_ALL=C grep -Fwf <(echo "$IR") -A 3 $TRIM_DIR/${ILM_NAME}2_trim.fq | \
-    sed '/^--$/d' | head -n 3000000 > $BIN_PATH/data/${ILM_NAME}2_trim_subset.fq    
+    sed '/^--$/d' > $BIN_PATH/data/${ILM_NAME}2_trim_subset.fq    
   done 
 done
 
@@ -107,7 +107,7 @@ do
     sort | uniq`
     LC_ALL=C grep -Fwf <(echo "$IR") -A 3 $TRIM_DIR/${NP_NAME}_trim.fq | \
     sed '/^--$/d' > $BIN_PATH/data/${NP_NAME}_trim_subset.tmp  
-    $FILTLONG --target_bases 375000000 \
+    $FILTLONG --target_bases 150000000 \
     --length_weight 10 $BIN_PATH/data/${NP_NAME}_trim_subset.tmp \
     > $BIN_PATH/data/${NP_NAME}_trim_subset.fq
     rm $BIN_PATH/data/${NP_NAME}_trim_subset.tmp
