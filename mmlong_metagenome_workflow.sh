@@ -11,7 +11,7 @@ VERSION=1.1.3
 ### Description ----------------------------------------------------------------
 
 USAGE="$(basename "$0") [-h] [-d path -n file -m file -i file -f -t value -l value -x -k] 
--- mmlong metagenome data generation: Read filtering, metagenome assembly, 
+-- mmlong metagenome data generation v. $VERSION: Read filtering, metagenome assembly, 
 read coverage estimation, taxonomic classification and detection of SSU rRNA.
 
 where:
