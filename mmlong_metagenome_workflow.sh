@@ -2,7 +2,7 @@
 # mmlong metagenome data generation
 # By Rasmus Kirkegaard and Søren Karst
 # Version
-VERSION=1.1.3
+VERSION=1.1.4
 
 ################################################################################
 ### Preparation ----------------------------------------------------------------
@@ -98,7 +98,7 @@ if [ -z ${NP_MINLENGTH+x} ]; then NP_MINLENGTH=8000; fi;
 if [ -z ${KEEP+x} ]; then KEEP="NO"; fi;
 
 ### Data names
-NP_ALL=`printf "$NP_COV""\n""$NP_ASMB""\n" | uniq`
+NP_ALL=`printf "$NP_COV""\n""$NP_ASMB""\n" | sort | uniq`
 NP_COV_NAME=`echo "$NP_COV" | sed 's/\..*$//g'`
 NP_ASMB_NAME=`echo "$NP_ASMB" | sed 's/\..*$//g'`
 ILM_COV_NAME=`echo "$ILM_COV" | sed 's/[12]\..*$//g' | sort | uniq`
@@ -121,13 +121,13 @@ do
   PORETHREADS=$(($THREADS*100000000/$(stat --printf="%s" $DATA_DIR/$DATA_FILE)))
   if [ "$PORETHREADS" -eq "0" ]; then PORETHREADS=1; fi;
   cat $DATA_DIR/$DATA_FILE | $PARALLEL --progress -j $THREADS \
-  --recstart '@' --block 100M --pipe "cat > trimmed_data/{#}.tmp; \
+  -L 4 --round-robin --pipe "cat > trimmed_data/{#}.tmp; \
   $FILTLONG --min_length $NP_MINLENGTH --min_mean_q 85 trimmed_data/{#}.tmp \
   > trimmed_data/{#}_filt.tmp; \
   $PORECHOP -i trimmed_data/{#}_filt.tmp -o trimmed_data/{#}_trim.tmp \
-  --threads $PORETHREADS --min_split_read_size $NP_MINLENGTH --check_reads 1000; \
-  cat trimmed_data/{#}_trim.tmp >> trimmed_data/${DATA_NAME}_trim.fq; \
-  rm trimmed_data/{#}.tmp trimmed_data/{#}_filt.tmp trimmed_data/{#}_trim.tmp"
+  --threads $PORETHREADS --min_split_read_size $NP_MINLENGTH --check_reads 1000;"
+  cat trimmed_data/*_trim.tmp > trimmed_data/${DATA_NAME}_trim.fq
+  rm trimmed_data/*.tmp
 done
 
 # Illumina data
@@ -137,7 +137,7 @@ do
   -A $TRU_ADP2 -j $THREADS -m 100 -q 20 \
   -o trimmed_data/${DATA_NAME}1_trim.fq \
   --paired-output trimmed_data/${DATA_NAME}2_trim.fq \
-  $DATA_DIR/${DATA_NAME}1.fq $DATA_DIR/${DATA_NAME}2.fq
+  $DATA_DIR/${DATA_NAME}1.* $DATA_DIR/${DATA_NAME}2.*
 done
 fi
 
@@ -262,9 +262,9 @@ SCF=`grep "^>" metagenome_assembly/assembly_racon.fa | tr -d ">" | sort`
 cat metagenome_assembly/assembly_racon.fa | $PARALLEL --progress -j $THREADS \
 --recstart '>' --pipe "cat > metagenome_annotation/{#}.tmp; $PRODIGAL \
 -a metagenome_annotation/{#}_orfs.tmp -i metagenome_annotation/{#}.tmp \
--m -o /dev/null -p meta -q; cat metagenome_annotation/{#}_orfs.tmp >>\
-metagenome_annotation/orfs.faa; rm metagenome_annotation/{#}_orfs.tmp \
-metagenome_annotation/{#}.tmp"
+-m -o /dev/null -p meta -q"
+cat metagenome_annotation/*_orfs.tmp > metagenome_annotation/orfs.faa
+rm metagenome_annotation/*.tmp
 
 # Essential genes
 $HMMSEARCH --tblout metagenome_annotation/hmm.orfs.txt --cut_tc --notextw \
@@ -426,7 +426,9 @@ exit 0
 ################################################################################
 ### Testing --------------------------------------------------------------------
 ################################################################################
-
+NP_ASMB=`cat np_asmb.txt`;
+NP_COV=`cat np_cov.txt`;
+ILM_COV=`cat ilm_cov.txt`;
 ILM_ADP1=CTGTCTCTTATACACATCTGACGCTGCCGACGA
 ILM_ADP2=CTGTCTCTTATACACATCTCCGAGCCCACGAGAC
 FILTLONG=/space/sharedbin/bin/filtlong;
@@ -447,10 +449,12 @@ MOTHUR=/space/sharedbin/bin/mothur;
 MOTHUR_DB=/space/users/smk/Software/databases/mothur/silva.seed_v132.align;
 MOTHUR_TAX=/space/users/smk/Software/databases/mothur/silva.seed_v132.tax;
 RSTUDIO=/usr/bin/rstudio;
-NP_ALL=`printf "$NP_COV""\n""$NP_ASMB""\n" | uniq`;
+NP_ALL=`printf "$NP_COV""\n""$NP_ASMB""\n" | sort |uniq`;
 NP_COV_NAME=`echo "$NP_COV" | sed 's/\..*$//g'`;
 NP_ASMB_NAME=`echo "$NP_ASMB" | sed 's/\..*$//g'`;
 ILM_COV_NAME=`echo "$ILM_COV" | sed 's/[12]\..*$//g' | sort | uniq`;
 THREADS=40;
 NP_MINLENGTH=8000;
+DATA_DIR=../data;
+
 
