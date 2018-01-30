@@ -1,7 +1,7 @@
 #!/bin/bash
 # mmlong reassembly workflow
 # By Rasmus Kirkegaard and Søren Karst
-VERSION=1.0.2
+VERSION=1.0.4
 
 ################################################################################
 ### Preparation ----------------------------------------------------------------
@@ -10,8 +10,7 @@ VERSION=1.0.2
 ### Description ----------------------------------------------------------------
 
 USAGE="$(basename "$0") [-h] [-n file -i file -b folder -d folder -m folder -t value -x] 
--- mmlong metagenome data generation v. $VERSION: Read filtering, metagenome assembly, 
-read coverage estimation, taxonomic classification and detection of SSU rRNA.
+-- mmlong reassembly workflow v. $VERSION: Based on binned scaffolds recruit reads and perform Unicycler reassembly.
 
 where:
     -h  Show this help text.
@@ -78,6 +77,7 @@ for BIN_PATH in $BIN_DIR/*.fa*
 do
   BIN_NAME=`basename "$BIN_PATH" | sed 's/\..*$//g'`
   mkdir reassembly/$BIN_NAME
+  cp $BIN_PATH reassembly/$BIN_NAME/${BIN_NAME}_massembly.fa
   grep ">" $BIN_PATH | tr -d ">" |  tr -d '\15\32' \
   > reassembly/$BIN_NAME/scaffold.list
   mkdir reassembly/$BIN_NAME/data
@@ -88,9 +88,9 @@ for BIN_PATH in reassembly/*
 do
   for ILM_NAME in $ILM_ASMB_NAME
   do
-    IR=`$SAMTOOLS view -@ $THREADS -q 10 -F 0x104 $MAP_DIR/$ILM_NAME* |\
+    IR=`$SAMTOOLS view -@ $THREADS -q 10 -F 0x104 $MAP_DIR/${ILM_NAME}_cov.bam |\
     awk 'NR==FNR{a[$0];next}$3 in a{print $1}' $BIN_PATH/scaffold.list - |\
-    sort | uniq | head -n 1200000`
+    sort | uniq` # Subsetting disabled
     LC_ALL=C grep -Fwf <(echo "$IR") -A 3 $TRIM_DIR/${ILM_NAME}1_trim.fq | \
     sed '/^--$/d' > $BIN_PATH/data/${ILM_NAME}1_trim_subset.fq &
     LC_ALL=C grep -Fwf <(echo "$IR") -A 3 $TRIM_DIR/${ILM_NAME}2_trim.fq | \
@@ -102,14 +102,14 @@ for BIN_PATH in reassembly/*
 do
   for NP_NAME in $NP_ASMB_NAME
   do
-    IR=`$SAMTOOLS view -@ $THREADS -q 10 -F 0x104 $MAP_DIR/$NP_NAME* |\
+    IR=`$SAMTOOLS view -@ $THREADS -q 10 -F 0x104 $MAP_DIR/${NP_NAME}_cov.bam |\
     awk 'NR==FNR{a[$0];next}$3 in a{print $1}' $BIN_PATH/scaffold.list - |\
     sort | uniq`
     LC_ALL=C grep -Fwf <(echo "$IR") -A 3 $TRIM_DIR/${NP_NAME}_trim.fq | \
     sed '/^--$/d' > $BIN_PATH/data/${NP_NAME}_trim_subset.tmp  
-    $FILTLONG --target_bases 150000000 \
-    --length_weight 10 $BIN_PATH/data/${NP_NAME}_trim_subset.tmp \
-    > $BIN_PATH/data/${NP_NAME}_trim_subset.fq
+    #$FILTLONG --target_bases 150000000 \
+    #--length_weight 10 $BIN_PATH/data/${NP_NAME}_trim_subset.tmp \ #Subsetting disabled
+    cat $BIN_PATH/data/${NP_NAME}_trim_subset.tmp > $BIN_PATH/data/${NP_NAME}_trim_subset.fq
     rm $BIN_PATH/data/${NP_NAME}_trim_subset.tmp
   done 
 done
@@ -118,13 +118,14 @@ fi
 ### Reassembly -----------------------------------------------------------------
 for BIN_PATH in reassembly/*
 do
-  echo "assembly,n,max,total,gc,n50" > $BIN_PATH/stats.txt
+  ASMBS="$BIN_PATH/*_massembly.fa"
   for ILM_NAME in $ILM_ASMB_NAME
   do
     for NP_NAME in $NP_ASMB_NAME
     do
       ASMB_NAME=${NP_NAME}+${ILM_NAME}
-      if [ ! -d "$ASMB_NAME" ]; then
+      ASMBS="$ASMBS $BIN_PATH/${ASMB_NAME}_assembly.fa"
+      if [ ! -d "$BIN_PATH/$ASMB_NAME" ]; then
         mkdir $BIN_PATH/$ASMB_NAME
         $UNICYCLER -1 $BIN_PATH/data/${ILM_NAME}1_trim_subset.fq \
         -2 $BIN_PATH/data/${ILM_NAME}2_trim_subset.fq \
@@ -132,13 +133,13 @@ do
         --spades_path $SPADES --no_correct --min_kmer_frac 0.3 --kmer_count 3 \
         --no_pilon --racon_path $RACON --keep 3 -o $BIN_PATH/$ASMB_NAME
         cp $BIN_PATH/$ASMB_NAME/assembly.fasta \
-        $BIN_PATH/${ASMB_NAME}_assembly.fasta
-        $QUAST $BIN_PATH/${ASMB_NAME}_assembly.fasta -o $BIN_PATH/$ASMB_NAME/quast_stats --no-plots
-        tail -n 1 $BIN_PATH/$ASMB_NAME/quast_stats/transposed_report.tsv | cut -f1,6-10 | \
-        tr "\t" "," >> $BIN_PATH/stats.txt
+        $BIN_PATH/${ASMB_NAME}_assembly.fa
       fi       
     done
   done
+  if [ ! -d "$BIN_PATH/quast_stats" ]; then
+    $QUAST $ASMBS -o $BIN_PATH/quast_stats -R $BIN_PATH/*_massembly.fa
+  fi
 done
 
 ### Logfile --------------------------------------------------------------------
