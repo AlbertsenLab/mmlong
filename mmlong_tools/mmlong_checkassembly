@@ -2,7 +2,7 @@
 # mmlong checkassembly
 # By Rasmus Kirkegaard and Søren Karst
 # Version
-VERSION=0.1.0
+VERSION=0.1.3
 
 ################################################################################
 ### Preparation ----------------------------------------------------------------
@@ -10,7 +10,7 @@ VERSION=0.1.0
 
 ### Description ----------------------------------------------------------------
 
-USAGE="$(basename "$0") [-h] [-d folder -i file -n file -t value] 
+USAGE="$(basename "$0") [-h] [-d folder -b file -a file -r folder -o folder -t value] 
 -- mmlong checkassembly v. $VERSION: align assembly to metagenome bin and map
    bin reads to metagenome bin. Output alignments and read mappings in SAM
    format for visualization in CLC.
@@ -18,20 +18,42 @@ USAGE="$(basename "$0") [-h] [-d folder -i file -n file -t value]
 where:
     -h  Show this help text.
     -d  bin folder.
-    -i  List of Illumina data files.
-    -n  List of Nanopore data files.
-    -t  Number of threads.
+    -b  Genome bin file. Default: locate bin file in bin folder.
+    -a  List of re-assemblies. Default: locate reassembly files in binfolder.
+    -r  Read data folder. Default: data/ in bin folder.
+    -o  output folder. Default: <checkassembly_out>.
+    -t  Number of threads. Default is 40.
+
+
+Defaults expect:
+  1 x file with binned contigs with the post fix *_massembly.fa
+  1-n x file(s) with reassembly contigs named as {np_data}+{ilm_data}_assembly.fa
+  1 x folder containing read data used for reassembly.
+  1-n x read data files either nanopore data (np_data) og Illumina PE data (ilm_data).
+  The data file names have to be present in the re-assembly name to included in the
+  validation.
+
+Processing:
+  The tool aligns the reassembly contigs to the binned contigs with MINIMAP2. Output
+  is in sam format. The tool also aligns the data used for reassembly to the binned
+  contigs.
+
+Visualization:
+  Import into CLC Genomics workbench and use the track tools to visually compare 
+  the alignments.  
 "
 
 ### Terminal Arguments ---------------------------------------------------------
 
 # Import user arguments
-while getopts ':hzd:i:n:t:' OPTION; do
+while getopts ':hzd:b:a:r:o:t:' OPTION; do
   case $OPTION in
     h) echo "$USAGE"; exit 1;;
     d) BIN_DIR=$OPTARG;;
-    i) ILM_LIST=`cat $OPTARG`;;
-    n) NP_LIST=`cat $OPTARG`;;
+    b) BIN_FILE=$OPTARG;;
+    a) ASMB_LIST=`cat $OPTARG`;;
+    r) READ_DIR=$OPTARG;;
+    o) OUT_DIR=$OPTARG;;
     t) THREADS=$OPTARG;;
     :) printf 'missing argument for -$OPTARG\n' >&2; exit 1;;
     \?) printf 'invalid option for -$OPTARG\n' >&2; exit 1;;
@@ -45,43 +67,86 @@ if [ -z ${BIN_DIR+x} ]; then
   echo "$USAGE"
   exit 1
 fi
-if [ -z ${BIN_DATA+x} ]; then BIN_FILE=$BIN_DIR/*_massembly.fa; fi;
-if [ -z ${ASMB_DATA+x} ]; then ASMB_DATA=$BIN_DIR/*_assembly.fa; fi;
-if [ -z ${THREADS+x} ]; then THREADS=10; fi;
+if [ -z ${BIN_FILE+x} ]; then BIN_FILE=`echo $BIN_DIR/*_massembly.fa`; fi;
+if [ -z ${ASMB_LIST+x} ]; then ASMB_LIST=$BIN_DIR/all_assembly/*_assembly.fa; fi;
+if [ -z ${READ_DIR+x} ]; then READ_DIR=data; fi;
+if [ -z ${OUT_DIR+x} ]; then OUT_DIR=checkassembly_out; fi;
+if [ -z ${THREADS+x} ]; then THREADS=40; fi;
+
 
 ### Path to dependencies
-echo 
 . $MMLONG_DIR/mmlong_tools/dependencies.sh
 
-### Data names
-NP_LIST_NAME=`echo "$NP_LIST" | sed 's/\..*$//g'`
-ILM_LIST_NAME=`echo "$ILM_LIST" | sed 's/[12]\..*$//g' | sort | uniq`
+### Preparation
+mkdir -p $OUT_DIR
+LOG_NAME="mmlong_checkassembly_log_$(date +%s).txt"
+exec > >(tee -a $OUT_DIR/$LOG_NAME)
+exec 2>&1
+echo "mmlong checkassembly tool log" >> $OUT_DIR/$LOG_NAME
+echo "Script start: $(date)" >> $OUT_DIR/$LOG_NAME
+
+#for ENTRY in $ASMB_LIST; do
+#  ASMB_PATH+=`eval echo $BIN_DIR/$ENTRY`
+#  ASMB_PATH+=" " 
+#done
+
+BIN_NAME=`basename $BIN_FILE _massembly.fa`
+
+################################################################################
+### Log settings ---------------------------------------------------------------
+################################################################################
+
+echo "Settings:
+Script version: 	$VERSION
+Script call: 		$0 $*
+Bin directory:		$BIN_DIR
+Bin contig file:	$BIN_FILE
+Assembly files:		`echo $BIN_DIR/$ASMB_LIST`
+Read data directory:	$READ_DIR
+Output directory:	$OUT_DIR
+CPU threads:		$THREADS" >> $OUT_DIR/$LOG_NAME
 
 
 ################################################################################
 ### Workflow -------------------------------------------------------------------
 ################################################################################
+# Prepare output folder
 
+cp $BIN_FILE $OUT_DIR/
 
 # Align assemblies to genome bin
-for ASMB_FILE in $ASMB_DATA; do
-  ASMB_NAME=`basename $ASMB_FILE .fa`
-  BIN_NAME=`basename $BIN_FILE .fa`
-  $MINIMAP2 -ax asm5 $BIN_FILE $ASMB_DATA -t $THREADS > ${BIN_NAME}_${ASMB_NAME}.sam 
+for ASMB_FILE in $ASMB_PATH; do
+  ASMB_NAME=`basename $ASMB_FILE _assembly.fa`
+  printf "\n Aligning reassembly [$ASMB_NAME] to genome bin [$BIN_NAME]\n\n"
+  $MINIMAP2 -ax asm5 $BIN_FILE $ASMB_FILE -t $THREADS | 
+  sed -e 's/\t2048\t/\t0\t/' -e 's/\t2064\t/\t16\t/' \
+  > $OUT_DIR/${BIN_NAME}+${ASMB_NAME}.sam 
 done
 
 
 # Map Illumina data to genome bin
-for ILM_NAME in $ILM_LIST_NAME; do
-  BIN_NAME=`basename $BIN_FILE .fa`
-  $MINIMAP2 -ax sr $BIN_FILE $BIN_DIR/data/${ILM_NAME}1_trim_subset.fq \
-  $BIN_DIR/data/${ILM_NAME}2_trim_subset.fq -t $THREADS \
-  > ${BIN_NAME}_${ILM_NAME}.sam 
+ILM_DATA=`find $BIN_DIR/$READ_DIR/*_*1_ilmtrim_subset.fq -type f -exec basename {} 1_ilmtrim_subset.fq  \;`
+
+for ILM_NAME in $ILM_DATA; do
+  printf "\n Mapping Illumina PE data [$ILM_NAME] to genome bin [$BIN_NAME]\n\n"
+  $MINIMAP2 -ax sr $BIN_FILE $BIN_DIR/$READ_DIR/${ILM_NAME}1_ilmtrim_subset.fq \
+  $BIN_DIR/$READ_DIR/${ILM_NAME}2_ilmtrim_subset.fq -t $THREADS \
+  > $OUT_DIR/${BIN_NAME}+${ILM_NAME}.sam 
 done
 
 # Map Nanopore data to genome bin
-for NP_NAME in $NP_LIST_NAME; do
-  BIN_NAME=`basename $BIN_FILE .fa`
-  $MINIMAP2 -ax map-ont $BIN_FILE $BIN_DIR/data/${NP_NAME}_trim_subset.fq \
-  -t $THREADS > ${BIN_NAME}_${NP_NAME}.sam 
+NP_DATA=`find $BIN_DIR/$READ_DIR/*_nptrim_subset.fq -type f -exec basename {} _nptrim_subset.fq  \;`
+
+for NP_NAME in $NP_DATA; do
+  printf "\n Mapping Nanopore data [$NP_NAME] to genome bin [$BIN_NAME]\n\n"
+  $MINIMAP2 -ax map-ont $BIN_FILE $BIN_DIR/$READ_DIR/${NP_NAME}_nptrim_subset.fq \
+  -t $THREADS | sed -e 's/\t2048\t/\t0\t/' -e 's/\t2064\t/\t16\t/' \
+  > $OUT_DIR/${BIN_NAME}+${NP_NAME}.sam 
 done
+
+echo "Script end: $(date)" >> $OUT_DIR/$LOG_NAME
+
+################################################################################
+### Exit -----------------------------------------------------------------------
+################################################################################
+exit 0
