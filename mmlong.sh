@@ -20,9 +20,16 @@ where:
     ...  Commands for tool.
 
 Available tools:
+* metaflow: De novo assembly of metagenome using nanopore data, read coverage
+  estimation based on nanopore and illumina data, aswell as taxonomic classification
+  and detection of essntial genes and 16S. For more info type: \`mmlong metaflow -h\`
+* reassembly: Reassembly of metagenome bins using unicycler. For more info type: 
+  \`mmlong reassembly -h\`
+* miniasm-racon: Basic nanopore assembly with miniasm followed by racon polishing.
+  For more info type: \`mmlong miniasm-racon -h\`
 * checkassembly: align assembly to metagenome bin and map bin reads to
   metagenome bin. Output alignments and read mappings in SAM format for
-  visualization in CLC. For more info type: \`mmlong assemblycheck -h\`
+  visualization in CLC. For more info type: \`mmlong checkassembly -h\`
 "
 
 ### Terminal Arguments ---------------------------------------------------------
