@@ -1,0 +1,157 @@
+#!/bin/bash
+# mmlong miniasm-racon
+# By Rasmus Kirkegaard and Søren Karst
+# Version
+VERSION=0.1.0
+
+################################################################################
+### Preparation ----------------------------------------------------------------
+################################################################################
+
+### Description ----------------------------------------------------------------
+
+USAGE="$(basename "$0") [-h] [-d folder -b -p folder -a file -o folder -r value -t value -x] 
+-- mmlong miniasm-racon v. $VERSION: Perform long read assembly using miniasm followed by Racon polishing.
+
+where:
+    -h  Show this help text.
+    -d  Read data folder.
+    -a  List of read data files to use.
+    -o  Output folder. 
+    -r  Rounds of racon polishing.
+    -t  Number of threads. Default is 40.
+    -x  Run script on mmlong reassembly output assuming standard folder structure. 
+"
+
+### Terminal Arguments ---------------------------------------------------------
+
+# Import user arguments
+while getopts ':hzd:a:o:r:t:x' OPTION; do
+  case $OPTION in
+    h) echo "$USAGE"; exit 1;;
+    d) DATA_DIR=$OPTARG;;
+    a) DATA_LIST=`cat $OPTARG`;;
+    o) OUT_DIR=$OPTARG;;
+    r) NRACON=$OPTARG;;
+    t) THREADS=$OPTARG;;
+    x) XRUN=YES;;
+    :) printf 'missing argument for -$OPTARG\n' >&2; exit 1;;
+    \?) printf 'invalid option for -$OPTARG\n' >&2; exit 1;;
+  esac
+done
+
+# Check missing arguments
+MISSING="is missing but required. Exiting."
+if [ -z ${XRUN+x} ]; then
+  if [ -z ${DATA_DIR+x} ]; then
+    printf "\n -d not defined. Specify path to bin folder.\n\n"
+    echo "$USAGE"
+    exit 1
+  fi
+  if [ -z ${DATA_LIST+x} ]; then
+    printf "\n -a not defined. Specify list of data files to use for assembly.\n\n"
+    echo "$USAGE"
+    exit 1
+  fi
+  if [ -z ${OUT_DIR+x} ]; then
+    printf "\n -o not defined. Specify output folder.\n\n"
+    echo "$USAGE"
+    exit 1
+  fi
+fi
+if [ -z ${NRACON+x} ]; then NRACON=1; fi;
+if [ -z ${THREADS+x} ]; then THREADS=40; fi;
+
+### Path to dependencies
+. $MMLONG_DIR/mmlong_tools/dependencies.sh
+
+################################################################################
+### Log settings ---------------------------------------------------------------
+################################################################################
+
+function logging {
+  LOG_NAME="mmlong_miniasm-racon_log_$(date +%s).txt"
+  exec > >(tee -a $OUT_DIR/$LOG_NAME)
+  exec 2>&1
+  echo "mmlong miniasm-racon tool log" >> $OUT_DIR/$LOG_NAME
+  echo "Script start: $(date)" >> $OUT_DIR/$LOG_NAME
+  echo "Settings:
+  Script version: 	$VERSION
+  Script call: 		$0 $*
+  Data directory:	$DATA_DIR
+  Data list:		$DATA_LIST
+  Output directory:	$OUT_DIR
+  Racon rounds:		$NRACON
+  CPU threads:		$THREADS" >> $OUT_DIR/$LOG_NAME
+}
+
+
+################################################################################
+### Workflow -------------------------------------------------------------------
+################################################################################
+
+# Miniasm assembly
+
+function miniasm_assembly {
+  printf "\n Miniasm assembly using [$DATA_LIST] \n\n"
+  cat $(echo "$DATA_LIST" | sed "s!^!$DATA_DIR/!") > $OUT_DIR/np_all.fq
+  $MINIMAP2 -t $THREADS -x ava-ont $OUT_DIR/np_all.fq \
+  $OUT_DIR/np_all.fq > $OUT_DIR/read_minimap.paf
+  $MINIASM -f $OUT_DIR/np_all.fq $OUT_DIR/read_minimap.paf \
+  > $OUT_DIR/assembly_miniasm.gfa
+  awk '/^S/{print ">"$2"\n"$3}' $OUT_DIR/assembly_miniasm.gfa |\
+  awk '/^>/{print ">" ++i; next}{print}' > $OUT_DIR/miniasm_assembly.fa
+}
+
+# Racon polishing
+
+function racon_polishing {
+  ASSEMBLY=miniasm_assembly.fa
+  RACON_OUT=raconpolish
+  for ((N=1; N<=NRACON; N++)); do
+    printf "\n Racon polishing round $N\n\n"
+    $MINIMAP2 -x map-ont -t $THREADS $OUT_DIR/$ASSEMBLY \
+    $OUT_DIR/np_all.fq > $OUT_DIR/racon_minimap.paf
+    $RACON -t $THREADS $OUT_DIR/np_all.fq \
+    $OUT_DIR/racon_minimap.paf $OUT_DIR/$ASSEMBLY \
+    $OUT_DIR/${RACON_OUT}_$N.fa
+    sed -i 's/^>Consensus_/>/' $OUT_DIR/${RACON_OUT}_$N.fa
+    ASSEMBLY=${RACON_OUT}_$N.fa
+  done
+  mv $OUT_DIR/${RACON_OUT}_$NRACON.fa $OUT_DIR/miniasmracon_assembly.fa
+}
+
+# Normal mode
+if [ -z ${XRUN+x} ]; then
+  mkdir -p $OUT_DIR
+  logging
+  miniasm_assembly
+  racon_polishing
+fi
+
+# Batch mode
+if [ "$XRUN" = "YES" ]; then
+  for BIN_PATH in reassembly/*; do
+    DATA_DIR=$BIN_PATH/data
+    DATA_LIST=`ls -1 $BIN_PATH/data/*_nptrim_subset.fq | sed 's!.*/!!'`
+    DATA_NAMES=`echo "$DATA_LIST" |\
+    sed 's/_nptrim_subset.fq//g' |\
+    paste -sd "+" -`
+    BIN_NAME=`echo $BIN_PATH | sed -e 's!.*/!!' -e 's/\..*$//g'`
+    OUT_DIR=$BIN_PATH/MR+${BIN_NAME}+${DATA_NAMES}
+    mkdir -p $OUT_DIR
+    mkdir -p $BIN_PATH/all_assembly
+    logging
+    miniasm_assembly
+    racon_polishing
+    cp $OUT_DIR/miniasmracon_assembly.fa \
+    $BIN_PATH/all_assembly/MR+${BIN_NAME}+${DATA_NAMES}_mrassembly.fa
+   done
+fi
+
+echo "Script end: $(date)" >> $OUT_DIR/$LOG_NAME
+
+################################################################################
+### Exit -----------------------------------------------------------------------
+################################################################################
+exit 0
