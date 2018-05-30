@@ -1,0 +1,245 @@
+#!/bin/bash
+# mmlong links
+# By Rasmus Kirkegaard and Søren Karst
+# Version
+VERSION_LINKS=0.1.0
+
+################################################################################
+### Preparation ----------------------------------------------------------------
+################################################################################
+
+### Description ----------------------------------------------------------------
+
+USAGE="$(basename "$0") [-h] [-a file -d file -m string -l value -e value -o folder
+   -t value -] 
+-- mmlong links v. $VERSION_LINKS: Detect putative links between contigs in assembly
+   based on Illumina PE reads, Nanopore reads or mapped PE reads in bam format.
+
+where:
+    -h  Show this help text.
+    -a  Assembly file.
+    -d  Read data file or bam file. Illumine PE data should be concatenated to one file.
+    -m  Data type: \"ilm\", \"np\" \"bam\". 
+    -l  Nanopore read end length used for mapping.
+    -e  Contig end length used for mapping.
+    -o  output folder.
+    -t  Number of threads. Default is 40.
+    -c  Contig minimum length. Default is 4000 bp.
+
+Examples:
+
+mmlong links -a assembly.fasta -d np_mc1000_30083.fq -m np -l 1000 -e 25000 -o out -t 40
+mmlong links -a test_assembly.fa -d test_reads.fq -m ilm -e 1000 -o out -t 40
+"
+
+### Terminal Arguments ---------------------------------------------------------
+
+# Import user arguments
+while getopts ':hza:d:m:l:e:o:t:c:' OPTION; do
+  case $OPTION in
+    h) echo "$USAGE"; exit 1;;
+    a) ASMB_FILE=$OPTARG;;
+    d) DATA_FILE=$OPTARG;;
+    m) MODE=$OPTARG;;
+    l) NP_LENGTH=$OPTARG;;
+    e) CONTIG_END=$OPTARG;;
+    o) OUT_DIR=$OPTARG;;
+    t) THREADS=$OPTARG;;
+    c) CONTIG_MINLEN=$OPTARG;;
+    :) printf 'missing argument for -$OPTARG\n' >&2; exit 1;;
+    \?) printf 'invalid option for -$OPTARG\n' >&2; exit 1;;
+  esac
+done
+
+# Check missing arguments
+if [ -z ${ASMB_FILE+x} ]; then
+  printf "\n -a not defined. Specify assembly file.\n\n"
+  echo "$USAGE"
+  exit 1
+fi
+if [ -z ${DATA_FILE+x} ]; then
+  printf "\n -d not defined. Specify read data file.\n\n"
+  echo "$USAGE"
+  exit 1
+fi
+if [ -z ${MODE+x} ]; then
+  printf "\n -m not defined. Specify run mode.\n\n"
+  echo "$USAGE"
+  exit 1
+fi
+if [ -z ${NP_LENGTH+x} ] && [ $MODE = "np" ]; then
+  printf "\n -l not defined. Specify nanopore read end length.\n\n"
+  echo "$USAGE"
+  exit 1
+fi
+if [ -z ${CONTIG_END+x} ]; then
+  printf "\n -e not defined. Specify assembly end length.\n\n"
+  echo "$USAGE"
+  exit 1
+fi
+if [ -z ${OUT_DIR+x} ]; then OUT_DIR=out; fi;
+if [ -z ${THREADS+x} ]; then THREADS=40; fi;
+if [ -z ${CONTIG_MINLEN+x} ]; then CONTIG_MINLEN=4000; fi;
+
+
+### Path to dependencies
+. $MMLONG_DIR/mmlong_tools/dependencies.sh
+
+################################################################################
+### Log settings ---------------------------------------------------------------
+################################################################################
+
+function logging {
+  LOG_NAME="mmlong_links_log_$(date +%s).txt"
+  exec > >(tee -a $OUT_DIR/$LOG_NAME)
+  exec 2>&1
+  echo "mmlong links tool log" >> $OUT_DIR/$LOG_NAME
+  echo "Script start: $(date)" >> $OUT_DIR/$LOG_NAME
+  echo "Settings:
+  Script version: 	$VERSION_LINKS
+  Script call: 		$0 $1
+  Assembly file:	$ASMB_FILE
+  Read data:		$DATA_FILE
+  Mode:			$MODE
+  Nanopore end length:	$NP_LENGTH
+  Contig end length:	$CONTIG_END
+  Output directory:	$OUT_DIR
+  CPU threads:		$THREADS" >> $OUT_DIR/$LOG_NAME
+}
+
+################################################################################
+### Workflow -------------------------------------------------------------------
+################################################################################
+
+
+function mmlong_nanopore_ppe {
+  # Arguments
+  READ=$1
+  READN=$2
+  OUT=$3
+
+  # Format names
+  READ_NAME=${READ##*/}
+  READ_NAME=${READ_NAME%.*}
+  
+  # Prepare pseudo matepairs from nanopore data
+  awk -v read_len="$READN" '
+    NR%4==1{name=$1}
+    NR%4==2{seq_len=length($0);
+            seq_start=substr($0, 1, read_len);
+            seq_end=substr($0, seq_len - read_len + 1)}
+    NR%4==3{spacer=$0}     
+    NR%4==0&&seq_len>=2*read_len{q_start=substr($0, 1, read_len);
+                                q_end=substr($0, seq_len - read_len + 1);
+                                print name"\n"seq_start"\n"spacer"\n"q_start
+                                print name"\n"seq_end"\n"spacer"\n"q_end}
+  ' $READ > $OUT/${READ_NAME}_mp.fq
+}
+
+function mmlong_links_minimap2 {
+  # Arguments
+  ASMB=$1
+  MP=$2
+  OUT=$3
+  NT=$4
+  M=$5
+
+  if [ "$M" = "ilm" ]; then MMM="sr"; fi;
+  if [ "$M" = "np" ]; then MMM="map-ont"; fi;
+
+  # Format names
+  MP_NAME=${MP##*/}
+  MP_NAME=${MP_NAME%.*}
+  
+  # Map pseudo matepairs to assembly  
+  $MINIMAP2 -t $NT -ax $MMM $ASMB $MP |\
+  $SAMTOOLS view -@ $NT -b -F 0x904 - |\
+  $SAMTOOLS sort -@ $NT - > $OUT/${MP_NAME}.bam
+}
+
+function mmlong_links_detect {
+  # Arguments 
+  ASMB=$1
+  BAM=$2
+  CN=$3
+  OUT=$4
+  NT=$5
+  CML=$6
+
+  # Format names
+  BAM_NAME=${BAM##*/}
+  BAM_NAME=${BAM_NAME%.*}
+  BAM_NAME=${BAM_NAME%_cov}
+
+  # Define terminal regions
+  ASMB_ONELINE=`awk '/^>/ {printf("\n%s\n",$1);next; } { printf("%s",$0);}\
+                  END {printf("\n");}' $ASMB | tail -n +2`
+  REGION=`awk -v end_len="$CN" -v seq_minlen="$CML" '
+                 NR%2==1{name=substr($1,2)}
+                 NR%2==0{seq_len=length($0);
+                         start1=1;
+                         start2=end_len;
+                         end1=seq_len - end_len + 1;
+                         end2=seq_len;
+                         if (seq_len >= 2 * end_len)
+                           print name":"start1"-"start2"\n"name":"end1"-"end2
+                         else if (seq_len >= seq_minlen)
+                           print name":"start1"-"end2
+                         }
+  ' <(echo "$ASMB_ONELINE")`
+  unset ASMB_ONELINE
+
+  # Extract terminal mappings
+  $SAMTOOLS index $BAM
+  export SAMTOOLS BAM OUT
+  mkdir $OUT/tmp
+  echo "$REGION" |\
+  $PARALLEL -j $NT $'$SAMTOOLS view -@ 1 $BAM {} | grep -v "^@" | cut -f1,3 | sort -k1,2 | sed '\''s/_.*\t/\t/'\'' > $OUT/tmp/{#}.tmp'
+  cat $OUT/tmp/*.tmp > $OUT/$BAM_NAME.reads
+  rm -rf $OUT/tmp
+
+  # Detect contig links
+  echo "scaffold1,scaffold2,connections" > $OUT/${BAM_NAME}_link.csv
+  cat $OUT/$BAM_NAME.reads |\
+  awk '{a[$1]=a[$1] (a[$1]==""?"":OFS) $2; b[$1]++}\
+    END{for(i in a) if (b[i]==2) print i, a[i]}' - |\
+  awk '($2 < $3) {print $2,$3}; ($2 > $3) {print $3,$2}' - |\
+  sort -n | uniq -c | tr -s " " | awk '{OFS=","; if ($1 > 1) print $2,$3,$1}'\
+  >> $OUT/${BAM_NAME}_link.csv
+}
+
+# Format read data name
+DATA_NAME=${DATA_FILE##*/}
+DATA_NAME=${DATA_NAME%.*}
+
+# Nanopore mode
+if [ "$MODE" = "np" ]; then
+  mkdir -p $OUT_DIR
+  logging "$*"
+  mmlong_nanopore_ppe $DATA_FILE $NP_LENGTH $OUT_DIR
+  mmlong_links_minimap2 $ASMB_FILE $OUT_DIR/${DATA_NAME}_mp.fq $OUT_DIR $THREADS $MODE
+  mmlong_links_detect $ASMB_FILE $OUT_DIR/${DATA_NAME}_mp.bam $CONTIG_END $OUT_DIR $THREADS $CONTIG_MINLEN
+fi
+
+
+# Illumina mode
+if [ "$MODE" = "ilm" ]; then
+  mkdir -p $OUT_DIR
+  logging "$*"
+  mmlong_links_minimap2 $ASMB_FILE $DATA_FILE $OUT_DIR $THREADS $MODE
+  mmlong_links_detect $ASMB_FILE $OUT_DIR/${DATA_NAME}.bam $CONTIG_END $OUT_DIR $THREADS $CONTIG_MINLEN
+fi
+
+# Bam mode
+if [ "$MODE" = "bam" ]; then
+  mkdir -p $OUT_DIR
+  logging "$*"
+  mmlong_links_detect $ASMB_FILE $DATA_FILE $CONTIG_END $OUT_DIR $THREADS $CONTIG_MINLEN
+fi
+
+################################################################################
+### Exit -----------------------------------------------------------------------
+################################################################################
+echo "Script end: $(date)" >> $OUT_DIR/$LOG_NAME
+exit 0
+
