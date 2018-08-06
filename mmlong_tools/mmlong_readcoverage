@@ -1,0 +1,189 @@
+#!/bin/bash
+# mmlong readcoverage
+# By Rasmus Kirkegaard and Søren Karst
+# Version
+READCOVERAGE_VERSION=0.1.2
+
+################################################################################
+### Preparation ----------------------------------------------------------------
+################################################################################
+
+### Description ----------------------------------------------------------------
+
+USAGE="$(basename "$0") [-h] [-a file -d file -m string -l value -e value -o folder
+   -t value -w value] 
+-- mmlong readcoverage v. $READCOVERAGE_VERSION: Estimate average contig read coverage in an assembly
+   based on mapping of Illumina PE reads, Nanopore reads or mapped reads in bam format.
+
+where:
+    -h  Show this help text.
+    -a  Assembly file. Not required for bam input.
+    -d  Read data file or bam file. Illumine PE data should be concatenated to one file.
+    -m  Data type: \"ilm\", \"np\" \"bam\". 
+    -o  output folder.
+    -t  Number of threads. Default is 40.
+    -w  Calculates coverage in windows of the size defined by value. i.e. 100 bp.
+"
+
+### Terminal Arguments ---------------------------------------------------------
+
+# Import user arguments
+while getopts ':hza:d:m:o:t:w:' OPTION; do
+  case $OPTION in
+    h) echo "$USAGE"; exit 1;;
+    a) ASMB_FILE=$OPTARG;;
+    d) DATA_FILE=$OPTARG;;
+    m) MODE=$OPTARG;;
+    o) OUT_DIR=$OPTARG;;
+    t) THREADS=$OPTARG;;
+    w) WINDOW=$OPTARG;;
+    :) printf 'missing argument for -$OPTARG\n' >&2; exit 1;;
+    \?) printf 'invalid option for -$OPTARG\n' >&2; exit 1;;
+  esac
+done
+
+# Check missing arguments
+MISSING="is missing but required. Exiting."
+if [ -z ${ASMB_FILE+x} ] && [ "$MODE" != "bam" ]; then
+  printf "\n -a not defined. Specify assembly file.\n\n"
+  echo "$USAGE"
+  exit 1
+fi
+if [ -z ${DATA_FILE+x} ]; then
+  printf "\n -d not defined. Specify read data file.\n\n"
+  echo "$USAGE"
+  exit 1
+fi
+if [ -z ${MODE+x} ]; then
+  printf "\n -m not defined. Specify run mode.\n\n"
+  echo "$USAGE"
+  exit 1
+fi
+if [ -z ${OUT_DIR+x} ]; then OUT_DIR=out; fi;
+if [ -z ${THREADS+x} ]; then THREADS=40; fi;
+if [ -z ${WINDOW+x} ]; then WINDOW=disabled; fi;
+
+### Path to dependencies
+. $MMLONG_DIR/mmlong_tools/dependencies.sh
+
+################################################################################
+### Log settings ---------------------------------------------------------------
+################################################################################
+
+function logging {
+  LOG_NAME="mmlong_readcoverage_log_$(date +%s).txt"
+  exec > >(tee -a $OUT_DIR/$LOG_NAME)
+  exec 2>&1
+  echo "mmlong readcoverage log" >> $OUT_DIR/$LOG_NAME
+  echo "Script start: $(date)" >> $OUT_DIR/$LOG_NAME
+  echo "Settings:
+  Script version: 	$READCOVERAGE_VERSION
+  Script call: 		$0 $*
+  Assembly file:	$ASMB_FILE
+  Read data:		$DATA_FILE
+  Mode:			$MODE
+  Output directory:	$OUT_DIR
+  CPU threads:		$THREADS
+  Window size:		$WINDOW" >> $OUT_DIR/$LOG_NAME
+}
+
+################################################################################
+### Workflow -------------------------------------------------------------------
+################################################################################
+
+function mmlong_readcoverage_minimap2 {
+  # Arguments
+  ASMB=$1
+  READ=$2
+  OUT=$3
+  NT=$4
+  M=$5
+  if [ "$M" = "ilm" ]; then MMM="sr"; fi;
+  if [ "$M" = "np" ]; then MMM="map-ont"; fi;
+
+  # Format names
+  READ_NAME=${READ##*/}
+  READ_NAME=${READ_NAME%.*}
+  
+  # Map pseudo matepairs to assembly  
+  $MINIMAP2 -t $NT -ax $MMM $ASMB $READ |\
+  $SAMTOOLS view -@ $NT -q 10 -b -F 0x904 - |\
+  $SAMTOOLS sort -@ $NT - > $OUT/${READ_NAME}_cov.bam
+}
+
+function mmlong_readcoverage {
+  # Arguments
+  BAM=$1
+  OUT=$2
+
+  # Format names
+  BAM_NAME=${BAM##*/}
+  BAM_NAME=${BAM_NAME%.*}
+  BAM_NAME=${BAM_NAME%_cov}
+  
+  # Read coverage and stdev
+  echo "scaffold,coverage,stdev" > $OUT/${BAM_NAME}_cov.csv
+  $SAMTOOLS depth -aa $BAM |\
+  awk -F  "\t" '{a[$1] += $3; b[$1]++; c[$1]+=$3*$3}\
+  END{OFS = ","; for (i in a) print i, a[i]/b[i], sqrt(c[i]/b[i] - (a[i]/b[i])^2)}' - |\
+  sort -t, -n -k1,1 >> $OUT/${BAM_NAME}_cov.csv
+  # $SAMTOOLS depth: -aa = keep contigs with 0 coverage
+}
+
+function mmlong_readcoverage_windows {
+  # Arguments
+  BAM=$1
+  OUT=$2
+  W=$3
+
+  # Format names
+  BAM_NAME=${BAM##*/}
+  BAM_NAME=${BAM_NAME%.*}
+  BAM_NAME=${BAM_NAME%_cov}
+  
+  # Read coverage in windows
+  echo "scaffold,position,coverage" > $OUT/${BAM_NAME}_cov.csv
+  $SAMTOOLS depth -aa $BAM |\
+  awk -F  "\t" -v window=$W '
+     ($1 != grp1){grp1 = $1; grp2 = 0;}
+     {a[grp1","grp2] += $3; b[grp1","grp2]++}
+     (b[grp1","grp2] == window){grp2 += window}
+     END{OFS = ","; for (i in a) print i, a[i]/b[i]}
+    ' - |\
+  sort -t, -n -k1,1 -k2,2 >> $OUT/${BAM_NAME}_cov.csv
+}
+
+# Format read data name
+DATA_NAME=${DATA_FILE##*/}
+DATA_NAME=${DATA_NAME%.*}
+
+# Mapping mode
+if [ "$MODE" = "np" ] || [ "$MODE" = "ilm" ]; then
+  mkdir -p $OUT_DIR
+  logging
+  mmlong_readcoverage_minimap2 $ASMB_FILE $DATA_FILE $OUT_DIR $THREADS $MODE 
+  if [ "$WINDOW" == "disabled" ]; then
+    mmlong_readcoverage $OUT_DIR/${DATA_NAME}_cov.bam $OUT_DIR
+  else
+    mmlong_readcoverage_windows $OUT_DIR/${DATA_NAME}_cov.bam $OUT_DIR $WINDOW
+  fi
+fi
+
+# Bam mode
+if [ "$MODE" = "bam" ]; then
+  mkdir -p $OUT_DIR
+  logging
+  if [ "$WINDOW" == "disabled" ]; then
+    mmlong_readcoverage $DATA_FILE $OUT_DIR
+  else
+    mmlong_readcoverage_windows $DATA_FILE $OUT_DIR $WINDOW
+  fi
+fi
+
+
+################################################################################
+### Exit -----------------------------------------------------------------------
+################################################################################
+echo "Script end: $(date)" >> $OUT_DIR/$LOG_NAME
+exit 0
+
