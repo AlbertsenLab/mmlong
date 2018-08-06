@@ -1,5 +1,5 @@
 #!/bin/bash
-# mmlong reassembly workflow
+# mmlong bin-reassembly workflow
 # By Rasmus Kirkegaard and Søren Karst
 VERSION=1.0.7
 
@@ -14,10 +14,15 @@ USAGE="$(basename "$0") [-h] [-n file -i file -b folder -d folder -m folder -t v
 
 where:
     -h  Show this help text.
-    -n  List of nanopore datafiles to be used for re-assembly. Default: ./np_asmb.txt.
-    -i  List of Illumina datafiles to be used for re-assembly. Default: ./ilm_asmb.txt.
+    -n  List of prefixes for Nanopore data files to be used for assembly.
+        The file names follow the format: \"prefix_nptrim.fq\".
+        Default: ./np_asmb.txt.
+    -i  List of prefixes for Illumina interleaved PE data files to be used
+        for assembly. The file names follow the format: \"prefix_ilmtrim.fq\".
+        Default: ./ilm_asmb.txt.
     -b  Folder containing bins in fasta format. Default: ./binning/bins .
-    -d  Folder containing trimmed reads. Default: ./trimmed_data .
+    -d  Folder containing trimmed reads.
+        Default: ./trimmed_data .
     -m  Folder containing mapped reads. Default: ./metagenome_mapping .
     -t  Number of threads to use. Default: 10.
     -x  Run pipeline on test data.
@@ -55,10 +60,6 @@ if [ -z ${TRIM_DIR+x} ]; then TRIM_DIR=./trimmed_data; fi;
 if [ -z ${MAP_DIR+x} ]; then MAP_DIR=./metagenome_mapping; fi;
 if [ -z ${THREADS+x} ]; then THREADS=10; fi;
 
-### Data names
-NP_ASMB_NAME=`echo "$NP_ASMB" | sed 's/\..*$//g'`
-ILM_ASMB_NAME=`echo "$ILM_ASMB" | sed 's/[12]\..*$//g' | sort | uniq`
-
 ### Path to dependencies
 . $MMLONG_DIR/mmlong_tools/dependencies.sh
 
@@ -66,25 +67,20 @@ ILM_ASMB_NAME=`echo "$ILM_ASMB" | sed 's/[12]\..*$//g' | sort | uniq`
 ### Log settings ---------------------------------------------------------------
 ################################################################################
 
-function logging {
-  OUT_DIR=$1
-  LOG_NAME="mmlong_reassembly_log_$(date +%s).txt"
-  if [ ! -f "$OUT_DIR/$LOG_NAME" ]; then
-    echo "mmlong reassembly workflow log" >> $OUT_DIR/$LOG_NAME
-    echo "Script start: $(date)" >> $OUT_DIR/$LOG_NAME
-    echo "Settings:
-    Script version: 	$VERSION
-    Script call: 		$0 $*
-    Nanopore asmb list:	$NP_ASMB
-    Illumina asmb list:	$ILM_ASMB
-    Bins folder:		$BIN_DIR
-    Trimmed reads folder: $TRIM_DIR
-    Mapped reads folder:	$MAP_DIR
-    CPU threads:		$THREADS" >> $OUT_DIR/$LOG_NAME
-  fi
-   exec > >(tee -a $OUT_DIR/$LOG_NAME)
-   exec 2>&1
-}
+  LOG_PATH="mmlong_reassembly_log_$(date +%s).txt"
+  echo "mmlong reassembly workflow log" > $LOG_PATH
+  echo "Script start: $(date)" >> $LOG_PATH
+  echo "Settings:
+  Script version: 	$VERSION
+  Script call: 		$0 $*
+  Nanopore asmb list:	$NP_ASMB
+  Illumina asmb list:	$ILM_ASMB
+  Bins folder:		$BIN_DIR
+  Trimmed reads folder: $TRIM_DIR
+  Mapped reads folder:	$MAP_DIR
+  CPU threads:		$THREADS" >> $LOG_PATH
+  exec > >(tee -a $LOG_PATH)
+  exec 2>&1 
 
 ################################################################################
 ### Workflow -------------------------------------------------------------------
@@ -97,51 +93,49 @@ for BIN_PATH in $BIN_DIR/*.fa*
 do
   BIN_NAME=`basename "$BIN_PATH" | sed 's/\..*$//g'`
   if [ ! -d "reassembly/$BIN_NAME" ]; then
-    # Bin log
-    logging reassembly/$BIN_NAME
-    printf "\n# Read recruitment ----------------------------------------------\n\n"
-    # Create bin reassembly folder
+    # Create bin reassembly folders
     mkdir reassembly/$BIN_NAME
+    mkdir reassembly/$BIN_NAME/data
+    printf "\n# Read recruitment for [$BIN_NAME]  -------------------------\n\n"
+    # Transfer bin  
     cp $BIN_PATH reassembly/$BIN_NAME/${BIN_NAME}_massembly.fa
     grep ">" $BIN_PATH | tr -d ">" |  tr -d '\15\32' \
     > reassembly/$BIN_NAME/scaffold.list
-    mkdir reassembly/$BIN_NAME/data
     # Prepare data stats file
     echo "data, total_bp, estimated_coverage" > reassembly/$BIN_NAME/data_stats.txt
     # Extract Illumina reads
-    for ILM_NAME in $ILM_ASMB_NAME
+    for ILM_NAME in $(echo "$ILM_ASMB")
     do
       printf "\nRecruiting Illumina reads to [$BIN_NAME] from [$ILM_NAME]\n\n"
-      IR=`$SAMTOOLS view -@ $THREADS -q 10 -F 0x104 $MAP_DIR/${ILM_NAME}_cov.bam |\
+      # Detect reads mapped to bin
+      IR=`$SAMTOOLS view -@ $THREADS -F 0x104 $MAP_DIR/${ILM_NAME}_cov.bam |\
       awk 'NR==FNR{a[$0];next}$3 in a{print $1}' reassembly/$BIN_NAME/scaffold.list - |\
-      sort | uniq` # Subsetting disabled
-      LC_ALL=C grep -Fwf <(echo "$IR") -A 3 $TRIM_DIR/${ILM_NAME}1_trim.fq | \
-      sed '/^--$/d' > reassembly/$BIN_NAME/data/${ILM_NAME}1_ilmtrim_subset.fq &
-      LC_ALL=C grep -Fwf <(echo "$IR") -A 3 $TRIM_DIR/${ILM_NAME}2_trim.fq | \
-      sed '/^--$/d' > reassembly/$BIN_NAME/data/${ILM_NAME}2_ilmtrim_subset.fq
+      sort | uniq`
+      # Extract PE read
+      LC_ALL=C grep -Fwf <(echo "$IR") -A 3 $TRIM_DIR/${ILM_NAME}_ilmtrim.fq | \
+      sed '/^--$/d' | paste - - - - - - - -  | tee >(cut -f 1-4 |\
+      tr "\t" "\n" > reassembly/$BIN_NAME/data/${ILM_NAME}_ilmtrim_R1.fq) |\
+      cut -f 5-8 | tr "\t" "\n" > reassembly/$BIN_NAME/data/${ILM_NAME}_ilmtrim_R2.fq      
       # Data stats
-      DATA_BP=`cat reassembly/$BIN_NAME/data/${ILM_NAME}1_ilmtrim_subset.fq \
-      reassembly/$BIN_NAME/data/${ILM_NAME}2_ilmtrim_subset.fq | paste - - - - | \
-      cut -f 2 | tr -d '\n' | wc -c`
+      DATA_BP=`cat reassembly/$BIN_NAME/data/${ILM_NAME}_ilmtrim_R1.fq \
+      reassembly/$BIN_NAME/data/${ILM_NAME}_ilmtrim_R2.fq |\
+      paste - - - - | cut -f 2 | tr -d '\n' | wc -c`
       ASMB_BP=`grep -v ">" reassembly/$BIN_NAME/${BIN_NAME}_massembly.fa  | tr -d '\n\15\32' | \
       wc -c`
       echo "$ILM_NAME, $DATA_BP, $((DATA_BP / ASMB_BP))" >> reassembly/$BIN_NAME/data_stats.txt    
     done 
     
     # Extract Nanopore reads
-    for NP_NAME in $NP_ASMB_NAME
+    for NP_NAME in $(echo "$NP_ASMB") 
     do
       printf "\nRecruiting Nanopore reads to [$BIN_NAME] from [$NP_NAME]\n\n"
-      IR=`$SAMTOOLS view -@ $THREADS -q 10 -F 0x104 $MAP_DIR/${NP_NAME}_cov.bam |\
+      IR=`$SAMTOOLS view -@ $THREADS -F 0x104 $MAP_DIR/${NP_NAME}_cov.bam |\
       awk 'NR==FNR{a[$0];next}$3 in a{print $1}' reassembly/$BIN_NAME/scaffold.list - |\
       sort | uniq`
-      LC_ALL=C grep -Fwf <(echo "$IR") -A 3 $TRIM_DIR/${NP_NAME}_trim.fq | \
-      sed '/^--$/d' > reassembly/$BIN_NAME/data/${NP_NAME}_nptrim_subset.tmp  
-      #$FILTLONG --target_bases 150000000 \
-      #--length_weight 10 $BIN_PATH/data/${NP_NAME}_trim_subset.tmp \ #Subsetting disabled
-      cat reassembly/$BIN_NAME/data/${NP_NAME}_nptrim_subset.tmp > reassembly/$BIN_NAME/data/${NP_NAME}_nptrim_subset.fq
-      rm reassembly/$BIN_NAME/data/${NP_NAME}_nptrim_subset.tmp
-      DATA_BP=`cat reassembly/$BIN_NAME/data/${NP_NAME}_nptrim_subset.fq | paste - - - - | \
+      LC_ALL=C grep -Fwf <(echo "$IR") -A 3 $TRIM_DIR/${NP_NAME}_nptrim.fq | \
+      sed '/^--$/d' > reassembly/$BIN_NAME/data/${NP_NAME}_subset_nptrim.fq
+      # Data stats
+      DATA_BP=`cat reassembly/$BIN_NAME/data/${NP_NAME}_subset_nptrim.fq | paste - - - - | \
       cut -f 2 | tr -d '\n' | wc -c`
       ASMB_BP=`grep -v ">" reassembly/$BIN_NAME/${BIN_NAME}_massembly.fa  | tr -d '\n\15\32' | \
       wc -c`
@@ -154,14 +148,12 @@ done
 printf "\n# Reassembly using Unicycler -----------------------------------\n\n"
 for BIN_PATH in reassembly/*
 do  
-  # Bin log
-  logging $BIN_PATH
   BIN_NAME=`basename "$BIN_PATH" | sed 's/\..*$//g'`
   ASMBS="$BIN_PATH/*_massembly.fa"
   mkdir $BIN_PATH/all_assembly
-  for ILM_NAME in $ILM_ASMB_NAME
+  for ILM_NAME in $(echo "$ILM_ASMB")
   do
-    for NP_NAME in $NP_ASMB_NAME
+    for NP_NAME in $(echo "$NP_ASMB") 
     do
       printf "\nReassembling [$BIN_NAME] using [$ILM_NAME] and [$NP_NAME]\n\n"
       ASMB_NAME=U+${BIN_NAME}+${NP_NAME}+${ILM_NAME}
@@ -169,9 +161,9 @@ do
       if [ ! -d "$BIN_PATH/$ASMB_NAME" ]; then
         # de novo assembly
         mkdir $BIN_PATH/$ASMB_NAME
-        $UNICYCLER -1 $BIN_PATH/data/${ILM_NAME}1_ilmtrim_subset.fq \
-        -2 $BIN_PATH/data/${ILM_NAME}2_ilmtrim_subset.fq \
-        -l $BIN_PATH/data/${NP_NAME}_nptrim_subset.fq --threads $THREADS \
+        $UNICYCLER -1 $BIN_PATH/data/${ILM_NAME}_ilmtrim_R1.fq \
+        -2 $BIN_PATH/data/${ILM_NAME}_ilmtrim_R2.fq \
+        -l $BIN_PATH/data/${NP_NAME}_subset_nptrim.fq --threads $THREADS \
         --spades_path $SPADES --no_correct --min_kmer_frac 0.3 --kmer_count 3 \
         --no_pilon --racon_path $RACON --keep 3 -o $BIN_PATH/$ASMB_NAME
         # Format and move assemblies

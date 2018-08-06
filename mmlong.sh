@@ -1,8 +1,8 @@
 #!/bin/bash
 # mmlong toolbox
-# By Rasmus Kirkegaard and Søren Karst
+# By Søren Karst and Rasmus Kirkegaard
 # Version
-VERSION=0.1.0
+MMLONG_VERSION=0.1.2
 
 ################################################################################
 ### Preparation ----------------------------------------------------------------
@@ -12,24 +12,28 @@ VERSION=0.1.0
 
 USAGE="$(basename "$0") [-h] [ name ...]
 
--- mmlong toolbox v. $VERSION: Misc. tools for mmlong workflow.
+-- mmlong v. ${MMLONG_VERSION}: workflows and tools for short and long
+                    read microbial metagenomics.
 
 where:
     -h   Show this help text.
     name Name of tool.
     ...  Commands for tool.
 
-Available tools:
-* metaflow: De novo assembly of metagenome using nanopore data, read coverage
-  estimation based on nanopore and illumina data, aswell as taxonomic classification
-  and detection of essntial genes and 16S. For more info type: \`mmlong metaflow -h\`
-* reassembly: Reassembly of metagenome bins using unicycler. For more info type: 
-  \`mmlong reassembly -h\`
-* miniasm-racon: Basic nanopore assembly with miniasm followed by racon polishing.
-  For more info type: \`mmlong miniasm-racon -h\`
-* checkassembly: align assembly to metagenome bin and map bin reads to
-  metagenome bin. Output alignments and read mappings in SAM format for
-  visualization in CLC. For more info type: \`mmlong checkassembly -h\`
+Workflows:
+* hybrid-metaflow: Metagenomic long read assembly and binning from
+                   using short and long read data.
+* short-metaflow:  Metagenomic assembly and binning from short
+                   read data.
+* bin-reassembly:  Reassembly of metagenome bins using unicycler.
+
+Tools:
+* miniasm-racon:   Long read assembly with miniasm and racon polishing.
+* readcoverage:    Read mapping and read coverage estimation.
+* links:           Read mapping and detection of putative links between
+                   scaffolds in an assembly.
+
+For help with a specific tool type: mmlong <name> -h
 "
 
 ### Terminal Arguments ---------------------------------------------------------
@@ -51,8 +55,6 @@ if [ -z "${TOOL}" ]; then printf "\n No tool selected!\n\n"; echo "$USAGE"; exit
 if [ -z "${TOOL_ARG}" ]; then
   printf "\n No arguments provided to $TOOL!\n\n"
   TOOL_ARG="-h"
-  echo "$USAGE"
-  exit 1
 fi
 
 # Paths
