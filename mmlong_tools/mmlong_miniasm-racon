@@ -1,8 +1,8 @@
 #!/bin/bash
 # mmlong miniasm-racon
-# By Rasmus Kirkegaard and Søren Karst
+# By Søren Karst and Rasmus Kirkegaard
 # Version
-VERSION=0.1.0
+MINIASN_RACON_VERSION=0.1.1
 
 ################################################################################
 ### Preparation ----------------------------------------------------------------
@@ -10,28 +10,31 @@ VERSION=0.1.0
 
 ### Description ----------------------------------------------------------------
 
-USAGE="$(basename "$0") [-h] [-d folder -b -p folder -a file -o folder -r value -t value -x] 
--- mmlong miniasm-racon v. $VERSION: Perform long read assembly using miniasm followed by Racon polishing.
+USAGE="$(basename "$0") [-h] [-d folder -a file -o folder -l value -r value -t value -x] 
+-- mmlong miniasm-racon v. $MINIASN_RACON_VERSION: Perform long read assembly using miniasm
+                                  followed by Racon polishing.
 
 where:
     -h  Show this help text.
     -d  Read data folder.
     -a  List of read data files to use.
     -o  Output folder. 
+    -l  Minimum contig length.
     -r  Rounds of racon polishing.
     -t  Number of threads. Default is 40.
-    -x  Run script on mmlong reassembly output assuming standard folder structure. 
+    -x  Run script on mmlong reassembly output assuming metaflow folder structure. 
 "
 
 ### Terminal Arguments ---------------------------------------------------------
 
 # Import user arguments
-while getopts ':hzd:a:o:r:t:x' OPTION; do
+while getopts ':hzd:a:o:l:r:t:x' OPTION; do
   case $OPTION in
     h) echo "$USAGE"; exit 1;;
     d) DATA_DIR=$OPTARG;;
     a) DATA_LIST=`cat $OPTARG`;;
     o) OUT_DIR=$OPTARG;;
+    l) MIN_LENGTH=$OPTARG;;
     r) NRACON=$OPTARG;;
     t) THREADS=$OPTARG;;
     x) XRUN=YES;;
@@ -59,6 +62,7 @@ if [ -z ${XRUN+x} ]; then
     exit 1
   fi
 fi
+if [ -z ${MIN_LENGTH+x} ]; then MIN_LENGTH=1000; fi;
 if [ -z ${NRACON+x} ]; then NRACON=1; fi;
 if [ -z ${THREADS+x} ]; then THREADS=40; fi;
 
@@ -73,14 +77,15 @@ function logging {
   LOG_NAME="mmlong_miniasm-racon_log_$(date +%s).txt"
   exec > >(tee -a $OUT_DIR/$LOG_NAME)
   exec 2>&1
-  echo "mmlong miniasm-racon tool log" >> $OUT_DIR/$LOG_NAME
+  echo "mmlong miniasm-racon log" >> $OUT_DIR/$LOG_NAME
   echo "Script start: $(date)" >> $OUT_DIR/$LOG_NAME
   echo "Settings:
-  Script version: 	$VERSION
+  Script version: 	$MINIASN_RACON_VERSION
   Script call: 		$0 $*
   Data directory:	$DATA_DIR
   Data list:		$DATA_LIST
   Output directory:	$OUT_DIR
+  Minimum contig length:$MIN_LENGTH
   Racon rounds:		$NRACON
   CPU threads:		$THREADS" >> $OUT_DIR/$LOG_NAME
 }
@@ -93,40 +98,64 @@ function logging {
 # Miniasm assembly
 
 function miniasm_assembly {
-  printf "\n Miniasm assembly using [$DATA_LIST] \n\n"
-  cat $(echo "$DATA_LIST" | sed "s!^!$DATA_DIR/!") > $OUT_DIR/np_all.fq
-  $MINIMAP2 -t $THREADS -x ava-ont $OUT_DIR/np_all.fq \
-  $OUT_DIR/np_all.fq > $OUT_DIR/read_minimap.paf
-  $MINIASM -f $OUT_DIR/np_all.fq $OUT_DIR/read_minimap.paf \
-  > $OUT_DIR/assembly_miniasm.gfa
-  awk '/^S/{print ">"$2"\n"$3}' $OUT_DIR/assembly_miniasm.gfa |\
-  awk '/^>/{print ">" ++i; next}{print}' > $OUT_DIR/miniasm_assembly.fa
+  # Arguments
+  OD=$1
+  DL=$2
+  DD=$3
+  NT=$4
+  ML=$5 
+  
+  # Workflow
+  printf "\nMiniasm assembly using [`echo $DL | tr -d '\n'`] \n\n"
+  # Concatenate assembly data
+  printf "\nConcatenate read data\n\n"
+  if [ ! -f "$OD/np_all.fq" ]; then
+    cat $(echo "$DL" | sed -e "s/^/$DD\\//" -e "s/$/*/" ) > $OD/np_all.fq
+  fi
+  # Read-read mapping
+  printf "\nMinimap read-read mapping\n\n"
+  $MINIMAP2 -t $NT -x ava-ont $OD/np_all.fq \
+  $OD/np_all.fq > $OD/miniasm_minimap.paf
+  # Assembly
+  printf "\nMiniasm de novo assembly\n\n"
+  $MINIASM -f $OD/np_all.fq $OD/miniasm_minimap.paf \
+  > $OD/assembly_miniasm.gfa
+  # Format assembly output
+  awk '/^S/{print ">"$2"\n"$3}' $OD/assembly_miniasm.gfa |\
+  awk '/^>/{print ">" ++i; next}{print}' | \
+  awk -v seq_minlen="$ML" '
+  !/^>/ { next } { getline seq } length(seq) >= seq_minlen { print $0 "\n" seq }' - \
+  > $OD/assembly_miniasm.fa
 }
 
 # Racon polishing
 
 function racon_polishing {
-  ASSEMBLY=miniasm_assembly.fa
-  RACON_OUT=raconpolish
-  for ((N=1; N<=NRACON; N++)); do
-    printf "\n Racon polishing round $N\n\n"
-    $MINIMAP2 -x map-ont -t $THREADS $OUT_DIR/$ASSEMBLY \
-    $OUT_DIR/np_all.fq > $OUT_DIR/racon_minimap.paf
-    $RACON -t $THREADS $OUT_DIR/np_all.fq \
-    $OUT_DIR/racon_minimap.paf $OUT_DIR/$ASSEMBLY \
-    $OUT_DIR/${RACON_OUT}_$N.fa
-    sed -i 's/^>Consensus_/>/' $OUT_DIR/${RACON_OUT}_$N.fa
-    ASSEMBLY=${RACON_OUT}_$N.fa
+  # Arguments
+  ASMB=$1
+  OD=$2
+  NR=$3
+  NT=$4
+  
+  for ((N=1; N<=NR; N++)); do
+    printf "\nRacon polishing round $N\n\n"
+    $MINIMAP2 -x map-ont -t $NT $OD/$ASMB \
+    $OD/np_all.fq > $OD/racon_minimap.paf
+    $RACON -u -t $NT $OD/np_all.fq \
+    $OD/racon_minimap.paf $OD/$ASMB \
+    > $OD/racon_$N.fa
+    sed -i '/^>/s/ .*//' $OD/racon_$N.fa
+    ASMB=racon_$N.fa
   done
-  mv $OUT_DIR/${RACON_OUT}_$NRACON.fa $OUT_DIR/miniasmracon_assembly.fa
+  mv $OD/racon_$NR.fa $OD/assembly_racon.fa
 }
 
 # Normal mode
 if [ -z ${XRUN+x} ]; then
   mkdir -p $OUT_DIR
   logging
-  miniasm_assembly
-  racon_polishing
+  miniasm_assembly $OUT_DIR "$DATA_LIST" $DATA_DIR $THREADS $MIN_LENGTH
+  racon_polishing assembly_miniasm.fa $OUT_DIR $NRACON $THREADS
 fi
 
 # Batch mode
@@ -142,16 +171,15 @@ if [ "$XRUN" = "YES" ]; then
     mkdir -p $OUT_DIR
     mkdir -p $BIN_PATH/all_assembly
     logging
-    miniasm_assembly
-    racon_polishing
-    cp $OUT_DIR/miniasmracon_assembly.fa \
+    miniasm_assembly $OUT_DIR "$DATA_LIST" $DATA_DIR $THREADS $MIN_LENGTH
+    racon_polishing assembly_miniasm.fa $OUT_DIR $NRACON $THREADS
+    cp $OUT_DIR/assembly_racon.fa \
     $BIN_PATH/all_assembly/MR+${BIN_NAME}+${DATA_NAMES}_mrassembly.fa
    done
 fi
 
-echo "Script end: $(date)" >> $OUT_DIR/$LOG_NAME
-
 ################################################################################
 ### Exit -----------------------------------------------------------------------
 ################################################################################
+echo "Script end: $(date)" >> $OUT_DIR/$LOG_NAME
 exit 0
