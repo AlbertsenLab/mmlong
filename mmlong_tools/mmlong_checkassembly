@@ -79,23 +79,16 @@ if [ -z ${THREADS+x} ]; then THREADS=40; fi;
 
 ### Preparation
 mkdir -p $OUT_DIR
-LOG_NAME="mmlong_checkassembly_log_$(date +%s).txt"
-exec > >(tee -a $OUT_DIR/$LOG_NAME)
-exec 2>&1
-echo "mmlong checkassembly tool log" >> $OUT_DIR/$LOG_NAME
-echo "Script start: $(date)" >> $OUT_DIR/$LOG_NAME
-
-#for ENTRY in $ASMB_LIST; do
-#  ASMB_PATH+=`eval echo $BIN_DIR/$ENTRY`
-#  ASMB_PATH+=" " 
-#done
-
 BIN_NAME=`basename $BIN_FILE _massembly.fa`
 
 ################################################################################
 ### Log settings ---------------------------------------------------------------
 ################################################################################
-
+LOG_NAME="mmlong_checkassembly_log_$(date +%s).txt"
+exec > >(tee -a $OUT_DIR/$LOG_NAME)
+exec 2>&1
+echo "mmlong checkassembly tool log" >> $OUT_DIR/$LOG_NAME
+echo "Script start: $(date)" >> $OUT_DIR/$LOG_NAME
 echo "Settings:
 Script version: 	$VERSION
 Script call: 		$0 $*
