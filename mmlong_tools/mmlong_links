@@ -4,6 +4,17 @@
 # Version
 VERSION_LINKS=0.1.0
 
+module load SAMtools/1.10-foss-2018a
+module load Minimap2/2.17-foss-2018a
+module load parallel
+
+SAMTOOLS=samtools
+MINIMAP2=minimap2
+PARALLEL=parallel
+
+
+
+
 ################################################################################
 ### Preparation ----------------------------------------------------------------
 ################################################################################
@@ -86,7 +97,7 @@ if [ -z ${LINK_MIN+x} ]; then LINK_MIN=2; fi;
 
 
 ### Path to dependencies
-. $MMLONG_DIR/mmlong_tools/dependencies.sh
+#. $MMLONG_DIR/mmlong_tools/dependencies.sh
 
 ################################################################################
 ### Log settings ---------------------------------------------------------------
@@ -204,7 +215,7 @@ function mmlong_links_detect {
   mkdir $OUT/tmp
   echo "$REGION" |\
   $PARALLEL -j $NT $'$SAMTOOLS view -@ 1 $BAM {} | grep -v "^@" | cut -f1,3,4,5 | sort -k1,2 | sed '\''s/_[1-9]\t/\t/'\'' > $OUT/tmp/{#}.tmp'
-  cat $OUT/tmp/*.tmp > $OUT/$BAM_NAME.mapmeta
+  find $OUT/tmp/ -type f -name '*.tmp'  -exec cat {} > $OUT/$BAM_NAME.mapmeta \;
   rm -rf $OUT/tmp
 
   # Detect contig links
@@ -263,4 +274,3 @@ fi
 ################################################################################
 echo "Script end: $(date)" >> $OUT_DIR/$LOG_NAME
 exit 0
-
