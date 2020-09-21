@@ -4,14 +4,6 @@
 # Version
 VERSION_LINKS=0.1.0
 
-module load SAMtools/1.10-foss-2018a
-module load Minimap2/2.17-foss-2018a
-module load parallel
-
-SAMTOOLS=samtools
-MINIMAP2=minimap2
-PARALLEL=parallel
-
 
 
 
@@ -97,7 +89,7 @@ if [ -z ${LINK_MIN+x} ]; then LINK_MIN=2; fi;
 
 
 ### Path to dependencies
-#. $MMLONG_DIR/mmlong_tools/dependencies.sh
+. $MMLONG_DIR/mmlong_tools/dependencies.sh
 
 ################################################################################
 ### Log settings ---------------------------------------------------------------
